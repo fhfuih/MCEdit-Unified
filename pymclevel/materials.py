@@ -996,7 +996,11 @@ def convertBlocks(destMats, sourceMats, blocks, blockData):
 namedMaterials = dict((i.name, i) for i in allMaterials)
 alphaMaterials = PCMaterials
 
-block_map = {
+block_map = {}
+for b in PCMaterials:
+    block_map[b.ID] = b.stringID
+
+block_map_old = {
     0:"minecraft:air",1:"minecraft:stone",2:"minecraft:grass",3:"minecraft:dirt",4:"minecraft:cobblestone",5:"minecraft:planks",6:"minecraft:sapling",
     7:"minecraft:bedrock",8:"minecraft:flowing_water",9:"minecraft:water",10:"minecraft:flowing_lava",11:"minecraft:lava",12:"minecraft:sand",13:"minecraft:gravel",
     14:"minecraft:gold_ore",15:"minecraft:iron_ore",16:"minecraft:coal_ore",17:"minecraft:log",18:"minecraft:leaves",19:"minecraft:sponge",20:"minecraft:glass",
