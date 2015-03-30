@@ -24,12 +24,13 @@ from albow.scrollpanel import ScrollPanel
 from albow.theme import ThemeProperty
 from translate import _
 from tree import Tree
+import directories
 
 import logging
 log = logging.getLogger(__name__)
 
-file_image = image.load('file.png')
-folder_image = image.load('folder.png')
+file_image = image.load(os.path.join(directories.getDataDir(), 'file.png'))
+folder_image = image.load(os.path.join(directories.getDataDir(), 'folder.png'))
 
 class DirPathView(Widget):
     def __init__(self, width, client, **kwds):
