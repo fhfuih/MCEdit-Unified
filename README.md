@@ -17,8 +17,7 @@ See TRANSLATION.txt for further details.
 
 Developers don't have to tweak their code so much.
 The only modifications concern strings which need text formatting or concatenation.
-See README.txt in albow subfolder for further information.
-
+See README.txt in `albow` subfolder for further information.
 
 -- D.C.-G. (LaChal)
 
@@ -40,103 +39,118 @@ MCEdit-Unified is written in Python using a variety of open source modules. When
 
 Clone MCEdit-Unified using your github client of choice:
 
-`>git clone --recursive https://github.com/Khroki/MCEdit-Unified`
+```sh
+git clone --recursive https://github.com/Khroki/MCEdit-Unified
+```
 
 Or, if you've already cloned MCEdit in the past and need to update, go to the existing source folder then run:
 
-`>git pull`
+```sh
+git pull
+```
 
 Optionally (but highly recommended), setup and activate [virtualenv](http://pypi.python.org/pypi/virtualenv). virtualenv will simplify development by creating an isolated and barebones Python environment. Anything you install while virtualenv is active won't affect your system-wide Python installation, for example.
 
-`>cd mcedit`
-<br>
-`>easy_install virtualenv`
-<br>
-`>virtualenv ENV`
-<br>
-`>. ENV/bin/activate`
+```sh
+cd mcedit
+easy_install virtualenv
+virtualenv ENV
+. ENV/bin/activate
+```
 
 Install various dependencies. This may take a bit (especially numpy). If installing pygame errors, try installing from a [binary packages](http://pygame.org/install.html) or following one of the guides from that page to install from source. On Windows, `easy_install` is preferred because it installs prebuilt binary packages. On Linux and Mac OS X, you may want to use `pip install` instead.
+Linux users can also use the package manager to install the dependencies.
 
-`>easy_install PyOpenGL`
-<br>
-`>easy_install numpy==1.9.3`
-<br>
-`>easy_install pygame`
-<br>
-`>easy_install pyyaml`
-<br>
-`>easy_install Pillow==2.9.0`
-<br>
-`>easy_install ftputil`
-<br>
-`>easy_install pywin32` (Windows only, needed for compiling)
+```sh
+easy_install PyOpenGL
+easy_install numpy==1.9.3
+easy_install pygame
+easy_install Pillow==2.9.0
+easy_install ftputil
+easy_install pywin32 (Windows only, needed for compiling)
+```
 
 For windows users if `easy_install` cannot find a library you need, or you can't get `easy_install` working, all needed libraries can be downloaded as precompiled binaries on the internet in both 32bit and 64bit. pywin32 is available in 64bit despite it's name.
 
 Debian and Ubuntu Linux users can install the following packages via apt-get to grab all the dependencies easily and install them into the system python. This also downloads all libraries required to build these modules using `pip install`
 
-`$sudo apt-get install python-opengl python-pygame python-yaml python-numpy python-xlib`
+```sh
+sudo apt-get install python-opengl python-pygame python-yaml python-numpy python-xlib
+```
 
-Mac users need to install python-xlib. This can be done using `pip`:
+Mac and Linux users need to install python-xlib. This can be done using `pip`:
 
-`>pip install svn+https://svn.code.sf.net/p/python-xlib/code/trunk/`
+```sh
+pip install svn+https://svn.code.sf.net/p/python-xlib/code/trunk/
+```
+
+Linux users must install python-xlib 0.14 (or over). It may be possible that the pip repository install the wrong version. Google a bit to grab the right version archive, and install it manually. (It's a pure Python package and does not require C extension compilation.)
 
 You should now be able to run MCEdit-Unified with `python mcedit.py` assuming you've installed all the dependencies correctly.
+On Linux, it is recommended to use the `mcedit.sh` shell script.
 
-## INSTALLING _nbt.pyx:
-pymclevel contains a cython version of _nbt. This one is a lot faster, but has to be build manually.
-It requires cython 0.21.2 (Note: there are issues with 0.22)
-<br>
-`>pip install cython==0.21.2`
-<br>
-It's also worth upgrading setuptools:
-<br>
-`>pip install setuptools --upgrade`
+## BUILDING NBT AND PNG SUPPORT
 
-With cython you should be able to build the file.
-<br>
-`>python setup.py develop`
+__Please, mind to adapt the following information according to your operating system!__
 
-If no errors occured, only thing left to do is see if it worked correctly:
-<br>
-`>python setuptest.py`
+### DEPENDENCIES
 
+To build these libaries, you'll need _Cython 0.21_ and _setuptools_.
 
-## INSTALLING leveldb_mcpe:
-MCPE support requires a special library. MCEdit will run without it, but to have MCPE support you need to build it yourself.
-For mac and/or windows users:
-This requires a boost.python installation.
-Get boost: http://www.boost.org/ and make sure to build the python libs.
+First, install or update _setuptools_:
 
-Next step is to get leveldb-mcpe from Mojang:
-https://github.com/Mojang/leveldb-mcpe
+* Download [get-pypi.py](https://bootstrap.pypa.io/get-pip.py)
+* Run it: `python pypi.py`
 
-Build the thing using something like cmake, and copy the created leveldb-mcpe.lib to `./leveldb_mcpe`
+Then, install Cython:
 
-After those steps, you should be able to build the required .pyx:
-<br>
-`>cd ./leveldb_mcpe`
-<br>
-`>python setup.py build`
-
-Then head into the build folder and look for the folder containing the .pyx. Copy it to `./leveldb_mcpe`, and test:
-<br>
-`>python test.py`
-
-If no errors occured, move the .pyx to ../pymclevel, and you should be good to go.
-
-For linux users:
-Navigate to the leveldb_mcpe folder
-<br>
-`> python setup.py build`
-<br>
-`> python test.py`
-<br>
-And you should be good to go.
+`pip install cython==0.21.2`
 
 
-##New features test mode
+### SETUP SCRIPT
+
+This script is intended to be run in a shell opened in MCEdit-Unified folder.
+
+It takes arguments on the command line to work correctly.
+Invoke it like this:
+
+`python setup.py <argument> [argument [argument [...]]]`
+
+Without argument, it will fail. (And let you know...)
+
+
+Use the `all` argument to build all the libraries the script can handle.  
+The `nbt` one will build only the NBT support.  
+The `png` one will build only the PNG support.  
+The `help` one can, ehhh, help...
+
+After the NBT support is built, you can run a very simple test:
+
+`python setuptest.py`
+
+
+### Pocket Edition Support
+
+MCPE support requires a special library. MCEdit will run without it, but you will not be able to edit Pocket worlds.
+
+This library is embeded in the packages for OSX and Windows, and will mostly work.
+
+On Linux systems, it is necessary to compile the library, because it requires to be linked to `zlib` one on the system.
+It may be necessary to compile `zlib` specifically for the PE support if the one on the system is not compatible. (It may also happen this library is not on the system...)
+
+The Python script `setup_leveldb.py` in the `pymclevel` directory wuill build the PE support, and the `zlib` library when needed.
+Read `INSTALL_LEVELDB` in the `pymclevel` directory for more information.
+
+Note that, if you use the installer for Linux, this script is used during installation to build the library.
+
+([[Compilation on Windows and OSX part to be written.]])
+
+It is possible to enable a debug mode for PE support by running MCEdit with the `--debug-pe` option on the command line.
+Some messages will be displayed in the console. A lot of information will be stored in a `dump_pe.txt` file. This file can be very big, so be carefull with this debug mode!
+You can use this option several times to get more information in the file. Currently, using this option more than 2 times will have no effect.
+
+## New features test mode
+
 Some unfinished features and fixes may be included in future MCEdit-Unified releases, this inactive code can be activated using the process below. Use at your own risk.
 
 To use:

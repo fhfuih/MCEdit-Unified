@@ -56,12 +56,14 @@ def fillBlocksIter(level, box, blockInfo, blocksToReplace=(), noData=False):
     blocksIdToReplace = [block.ID for block in blocksToReplace]
 
     blocksList = []
+    append = blocksList.append
+    defsIds = level.defsIds
     if tileEntity and box is not None:
         for (boxX, boxY, boxZ) in box.positions:
             if blocktable is None or level.blockAt(boxX, boxY, boxZ) in blocksIdToReplace:
-                tileEntityObject = TileEntity.Create(tileEntity)
+                tileEntityObject = TileEntity.Create(tileEntity, defsIds=defsIds)
                 TileEntity.setpos(tileEntityObject, (boxX, boxY, boxZ))
-                blocksList.append(tileEntityObject)
+                append(tileEntityObject)
 
     i = 0
     skipped = 0

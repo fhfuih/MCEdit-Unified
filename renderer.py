@@ -223,12 +223,14 @@ import logging
 import numpy
 from OpenGL import GL
 import pymclevel
-from pymclevel import MCEDIT_DEFS, MCEDIT_IDS
-from pymclevel.materials import alphaMaterials
+from pymclevel.materials import alphaMaterials, pocketMaterials
 import sys
 from config import config
 # import time
 
+def get_materials():
+    alphaMaterials = pymclevel.materials.alphaMaterials
+    pocketMaterials = pymclevel.materials.pocketMaterials
 
 def chunkMarkers(chunkSet):
     """ Returns a mapping { size: [position, ...] } for different powers of 2
@@ -254,12 +256,12 @@ def chunkMarkers(chunkSet):
             o = all4(cx, cz)
             others = set(o).intersection(chunkSet)
             if len(others) == 4:
-                sizedChunks[nextsize].append(o[0])
+                sizedChunks[nextsize].append(o[0]) # Possibly cache append?
                 for c in others:
                     chunkSet.discard(c)
             else:
                 for c in others:
-                    sizedChunks[size].append(c)
+                    sizedChunks[size].append(c) # Possibly cache append?
                     chunkSet.discard(c)
 
         if len(sizedChunks[nextsize]):
@@ -375,9 +377,10 @@ class ChunkRenderer(object):
             # discard the standard detail renderers
             if minlod > 0:
                 blockRenderers = []
+                append = blockRenderers.append
                 for br in self.blockRenderers:
                     if br.detailLevels != (0,):
-                        blockRenderers.append(br)
+                        append(br)
 
                 self.blockRenderers = blockRenderers
 
@@ -403,7 +406,7 @@ class ChunkRenderer(object):
 
     @property
     def done(self):
-        return len(self.invalidLayers) == 0
+        return not self.invalidLayers
 
 
 _XYZ = numpy.s_[..., 0:3]
@@ -479,14 +482,14 @@ def rotateTemplate(template, x=0, y=0):
     TODO: Add ability for multiples of 45
     """
     template = template.copy()
-    for _ in range(0, x, 90):
+    for _ in xrange(0, x, 90):
         # y -> -z and z -> y
         template[..., (1, 2)] = template[..., (2, 1)]
         template[..., 2] -= 0.5
         template[..., 2] *= -1
         template[..., 2] += 0.5
 
-    for _ in range(0, y, 90):
+    for _ in xrange(0, y, 90):
         # z -> -x and x -> z
         template[..., (0, 2)] = template[..., (2, 0)]
         template[..., 0] -= 0.5
@@ -495,7 +498,7 @@ def rotateTemplate(template, x=0, y=0):
     return template
 
 
-def makeVerticesFromModel(templates, dataMask=0, debug=False, id=""):
+def makeVerticesFromModel(templates, dataMask=0):
     """
     Returns a function that creates vertex arrays.
 
@@ -506,7 +509,7 @@ def makeVerticesFromModel(templates, dataMask=0, debug=False, id=""):
     :param templates: list of templates to draw
     :param dataMask:  mask to mask the data
     """
-    if type(templates) is list:
+    if isinstance(templates, list):
         templates = numpy.array(templates)
     if templates.shape == (6, 4, 6):
         templates = numpy.array([templates])
@@ -522,15 +525,10 @@ def makeVerticesFromModel(templates, dataMask=0, debug=False, id=""):
         data = blockData[mask]
         data &= dataMask
         self.vertexArrays = []
-        if debug:
-            print "=== " + id + " ==="
-            print "Elements: " + str(elements)
-            print "Data: " + str(data)
-            print "Block Mask: " + str(blockData[mask])
-            print "Supplied Mask: " + str(dataMask)
-        for i in range(elements):
+        append = self.vertexArrays.append
+        for i in xrange(elements):
             vertexArray = numpy.zeros((len(blockIndices[0]), 6, 4, 6), dtype='float32')
-            for indicies in range(3):
+            for indicies in xrange(3):
                 dimension = (0, 2, 1)[indicies]
 
                 vertexArray[..., indicies] = blockIndices[dimension][:, numpy.newaxis,
@@ -545,7 +543,7 @@ def makeVerticesFromModel(templates, dataMask=0, debug=False, id=""):
                 ..., numpy.newaxis, numpy.newaxis, numpy.newaxis]
             vertexArray.shape = (vertexArray.shape[0] * 6, 4, 6)
             yield
-            self.vertexArrays.append(vertexArray)
+            append(vertexArray)
     return makeVertices
 
 
@@ -606,7 +604,7 @@ def createPrecomputedVertices():
     zArray = numpy.arange(16)[numpy.newaxis, :, numpy.newaxis, numpy.newaxis]
     yArray = numpy.arange(height)[numpy.newaxis, numpy.newaxis, :, numpy.newaxis]
 
-    for dir in range(len(faceVertexTemplates)):
+    for dir in xrange(len(faceVertexTemplates)):
         precomputedVertices[dir][_XYZ][..., 0] = xArray
         precomputedVertices[dir][_XYZ][..., 1] = yArray
         precomputedVertices[dir][_XYZ][..., 2] = zArray
@@ -630,6 +628,15 @@ class ChunkCalculator(object):
     precomputedVertices = createPrecomputedVertices()
 
     def __init__(self, level):
+        if not hasattr(alphaMaterials, 'Stone'):
+            get_materials()
+        self.stoneid = stoneid = alphaMaterials.Stone.ID
+        self.hiddenOreMaterials[alphaMaterials.Dirt.ID] = stoneid
+        self.hiddenOreMaterials[alphaMaterials.Grass.ID] = stoneid
+        self.hiddenOreMaterials[alphaMaterials.Sand.ID] = stoneid
+        self.hiddenOreMaterials[alphaMaterials.Gravel.ID] = stoneid
+        self.hiddenOreMaterials[alphaMaterials.Netherrack.ID] = stoneid
+
         self.level = level
         self.makeRenderstates(level.materials)
 
@@ -767,85 +774,34 @@ class ChunkCalculator(object):
         materialCount = 2
 
         for br in self.blockRendererClasses[1:]:  # skip generic blocks
-            materialMap[br.getBlocktypes(materials)] = materialCount
+#             materialMap[br.getBlocktypes(materials)] = materialCount
+            materialMap[br(self).getBlocktypes(materials)] = materialCount
             br.materialIndex = materialCount
             materialCount += 1
 
         self.exposedMaterialMap = numpy.array(materialMap)
         self.addTransparentMaterials(self.exposedMaterialMap, materialCount)
 
-    def addTransparentMaterials_old(self, mats, materialCount):
-        transparentMaterials = [
-            alphaMaterials.Glass,
-            alphaMaterials.StructureVoid,
-            alphaMaterials.GlassPane,
-            alphaMaterials.IronBars,
-            alphaMaterials.MonsterSpawner,
-            alphaMaterials.Vines,
-            alphaMaterials.Fire,
-            alphaMaterials.Trapdoor,
-            alphaMaterials.Lever,
-            alphaMaterials.BrewingStand,
-            alphaMaterials.Anvil,
-            alphaMaterials.Barrier,
-            alphaMaterials.StainedGlass,
-            alphaMaterials.Hopper,
-            alphaMaterials.Cauldron,
-            alphaMaterials.WoodenDoor,
-            alphaMaterials.IronDoor,
-            alphaMaterials.AcaciaDoor,
-            alphaMaterials.JungleDoor,
-            alphaMaterials.IronTrapdoor,
-            alphaMaterials.Button,
-            alphaMaterials.WoodenButton,
-            alphaMaterials.FenceGate,
-            alphaMaterials.SpruceFenceGate,
-            alphaMaterials.BirchFenceGate,
-            alphaMaterials.JungleFenceGate,
-            alphaMaterials.DarkOakFenceGate,
-            alphaMaterials.AcaciaFenceGate,
-            alphaMaterials.Sign,
-            alphaMaterials.StructureVoid
-        ]
-        for b in transparentMaterials:
-            mats[b.ID] = materialCount
-            materialCount += 1
-
-    def addTransparentMaterials_new(self, mats, materialCount):
-        transparentMaterials = []
+    def addTransparentMaterials(self, mats, materialCount):
+        logging.debug("renderer::ChunkCalculator: Dynamically adding transparent materials.")
         for b in self.level.materials:
-            if hasattr(b, 'yaml'):
-                if b.yaml.get('opacity', 1) < 1:
-                    transparentMaterials.append(b)
-        for b in transparentMaterials:
-            mats[b.ID] = materialCount
-            materialCount += 1
+            yaml = getattr(b, 'yaml', None)
+            if yaml is not None and yaml.get('opacity', 1) < 1:
+                logging.debug("Adding '%s'" % b)
+                mats[b.ID] = materialCount
+                materialCount += 1
+        logging.debug("renderer::ChunkCalculator: Transparent materials added.")
 
-    if __builtins__.get('mcenf_addTransparentMaterials', False):
-        logging.info("Using new ChunkCalculator.addTransparentMaterials")
-        addTransparentMaterials = addTransparentMaterials_new
-    else:
-        addTransparentMaterials = addTransparentMaterials_old
 
     # don't show boundaries between dirt,grass,sand,gravel,or stone.
     # This hiddenOreMaterial definition shall be delayed after the level is loaded, in order to get the exact ones from the game versionned data.
     hiddenOreMaterials = numpy.arange(pymclevel.materials.id_limit, dtype='uint16')
-    stoneid = alphaMaterials.Stone.ID
-    hiddenOreMaterials[alphaMaterials.Dirt.ID] = stoneid
-    hiddenOreMaterials[alphaMaterials.Grass.ID] = stoneid
-    hiddenOreMaterials[alphaMaterials.Sand.ID] = stoneid
-    hiddenOreMaterials[alphaMaterials.Gravel.ID] = stoneid
-    hiddenOreMaterials[alphaMaterials.Netherrack.ID] = stoneid
 
     roughMaterials = numpy.ones((pymclevel.materials.id_limit,), dtype='uint8')
     roughMaterials[0] = 0
-    # Do not pre-load transparent materials, since it is game version dependent.
-    # addTransparentMaterials(None, roughMaterials, 2)
 
     def calcFacesForChunkRenderer(self, cr):
-        if 0 == len(cr.invalidLayers):
-            #            layers = set(br.layer for br in cr.blockRenderers)
-            #            assert set() == cr.visibleLayers.difference(layers)
+        if not cr.invalidLayers:
             return
 
         lod = cr.detailLevel
@@ -853,7 +809,7 @@ class ChunkCalculator(object):
         level = cr.renderer.level
         try:
             chunk = level.getChunk(cx, cz)
-        except Exception, e:
+        except Exception as e:
             if "Session lock lost" in e.message:
                 yield
                 return
@@ -863,7 +819,8 @@ class ChunkCalculator(object):
 
         yield
         brs = []
-        classes = [
+        append = brs.append
+        classes = (
             TileEntityRenderer,
             MonsterRenderer,
             ItemRenderer,
@@ -872,7 +829,7 @@ class ChunkCalculator(object):
             ChunkBorderRenderer,
             LowDetailBlockRenderer,
             OverheadBlockRenderer,
-        ]
+        )
         existingBlockRenderers = dict(((type(b), b) for b in cr.blockRenderers))
 
         for blockRendererClass in classes:
@@ -882,7 +839,7 @@ class ChunkCalculator(object):
                 continue
             if blockRendererClass.layer not in cr.invalidLayers:
                 if blockRendererClass in existingBlockRenderers:
-                    brs.append(existingBlockRenderers[blockRendererClass])
+                    append(existingBlockRenderers[blockRendererClass])
 
                 continue
 
@@ -891,7 +848,7 @@ class ChunkCalculator(object):
 
             for _ in br.makeChunkVertices(chunk):
                 yield
-            brs.append(br)
+            append(br)
 
         blockRenderers = []
 
@@ -900,7 +857,7 @@ class ChunkCalculator(object):
             for _ in self.calcHighDetailFaces(cr, blockRenderers):
                 yield
         else:
-            blockRenderers.extend(br for br in cr.blockRenderers if type(br) not in classes)
+            blockRenderers.extend(br for br in cr.blockRenderers if not isinstance(br, classes))
 
         # Add the layer renderers
         blockRenderers.extend(brs)
@@ -922,8 +879,6 @@ class ChunkCalculator(object):
             if not level.containsChunk(cx + dx, cz + dz):
                 neighboringChunks[dir] = pymclevel.infiniteworld.ZeroChunk(level.Height)
             else:
-                # if not level.chunkIsLoaded(cx+dx,cz+dz):
-                #    raise StopIteration
                 try:
                     neighboringChunks[dir] = level.getChunk(cx + dx, cz + dz)
                 except (EnvironmentError, pymclevel.mclevelbase.ChunkNotPresent, pymclevel.mclevelbase.ChunkMalformed):
@@ -936,13 +891,27 @@ class ChunkCalculator(object):
 
         areaBlocks = numpy.zeros((chunkWidth + 2, chunkLength + 2, chunkHeight + 2), numpy.uint16)
         areaBlocks[1:-1, 1:-1, 1:-1] = chunk.Blocks
-        areaBlocks[:1, 1:-1, 1:-1] = neighboringChunks[pymclevel.faces.FaceXDecreasing].Blocks[-1:, :chunkLength,
+        zeros = numpy.zeros((16, 16, 128), dtype=areaBlocks.dtype)
+
+        nb_fxd = neighboringChunks[pymclevel.faces.FaceXDecreasing].Blocks
+        if nb_fxd.shape[2] == chunkHeight / 2:
+            nb_fxd = numpy.concatenate((nb_fxd, zeros), axis=2)
+        areaBlocks[:1, 1:-1, 1:-1] = nb_fxd[-1:, :chunkLength,
                                      :chunkHeight]
-        areaBlocks[-1:, 1:-1, 1:-1] = neighboringChunks[pymclevel.faces.FaceXIncreasing].Blocks[:1, :chunkLength,
+        nb_fxi = neighboringChunks[pymclevel.faces.FaceXIncreasing].Blocks
+        if nb_fxi.shape[2] == chunkHeight / 2:
+            nb_fxi = numpy.concatenate((nb_fxi, zeros), axis=2)
+        areaBlocks[-1:, 1:-1, 1:-1] = nb_fxi[:1, :chunkLength,
                                       :chunkHeight]
-        areaBlocks[1:-1, :1, 1:-1] = neighboringChunks[pymclevel.faces.FaceZDecreasing].Blocks[:chunkWidth, -1:,
+        nb_fzd = neighboringChunks[pymclevel.faces.FaceZDecreasing].Blocks
+        if nb_fzd.shape[2] == chunkHeight / 2:
+            nb_fzd = numpy.concatenate((nb_fzd, zeros), axis=2)
+        areaBlocks[1:-1, :1, 1:-1] = nb_fzd[:chunkWidth, -1:,
                                      :chunkHeight]
-        areaBlocks[1:-1, -1:, 1:-1] = neighboringChunks[pymclevel.faces.FaceZIncreasing].Blocks[:chunkWidth, :1,
+        nb_fzi = neighboringChunks[pymclevel.faces.FaceZIncreasing].Blocks
+        if nb_fzi.shape[2] == chunkHeight / 2:
+            nb_fzi = numpy.concatenate((nb_fzi, zeros), axis=2)
+        areaBlocks[1:-1, -1:, 1:-1] = nb_fzi[:chunkWidth, :1,
                                       :chunkHeight]
         return areaBlocks
 
@@ -982,34 +951,86 @@ class ChunkCalculator(object):
 
         areaBlockLights[1:-1, 1:-1, 1:-1] = finalLight
 
-        nc = neighboringChunks[pymclevel.faces.FaceXDecreasing]
-        numpy.maximum(nc.SkyLight[-1:, :chunkLength, :chunkHeight],
-                      nc.BlockLight[-1:, :chunkLength, :chunkHeight],
+        zeros = numpy.zeros((16, 16, 128), dtype=areaBlockLights.dtype)
+
+        skyLight, blockLight = neighboringChunks[pymclevel.faces.FaceXDecreasing].SkyLight, neighboringChunks[pymclevel.faces.FaceXDecreasing].BlockLight
+        if skyLight.shape[2] == chunkHeight / 2:
+            skyLight = numpy.concatenate((skyLight, zeros), axis=2)
+            blockLight = numpy.concatenate((blockLight, zeros), axis=2)
+        numpy.maximum(skyLight[-1:, :chunkLength, :chunkHeight],
+                      blockLight[-1:, :chunkLength, :chunkHeight],
                       areaBlockLights[0:1, 1:-1, 1:-1])
 
-        nc = neighboringChunks[pymclevel.faces.FaceXIncreasing]
-        numpy.maximum(nc.SkyLight[:1, :chunkLength, :chunkHeight],
-                      nc.BlockLight[:1, :chunkLength, :chunkHeight],
+        skyLight, blockLight = neighboringChunks[pymclevel.faces.FaceXIncreasing].SkyLight, neighboringChunks[pymclevel.faces.FaceXIncreasing].BlockLight
+        if skyLight.shape[2] == chunkHeight / 2:
+            skyLight = numpy.concatenate((skyLight, zeros), axis=2)
+            blockLight = numpy.concatenate((blockLight, zeros), axis=2)
+        numpy.maximum(skyLight[:1, :chunkLength, :chunkHeight],
+                      blockLight[:1, :chunkLength, :chunkHeight],
                       areaBlockLights[-1:, 1:-1, 1:-1])
 
-        nc = neighboringChunks[pymclevel.faces.FaceZDecreasing]
-        numpy.maximum(nc.SkyLight[:chunkWidth, -1:, :chunkHeight],
-                      nc.BlockLight[:chunkWidth, -1:, :chunkHeight],
+        skyLight, blockLight = neighboringChunks[pymclevel.faces.FaceZDecreasing].SkyLight, neighboringChunks[pymclevel.faces.FaceZDecreasing].BlockLight
+        if skyLight.shape[2] == chunkHeight / 2:
+            skyLight = numpy.concatenate((skyLight, zeros), axis=2)
+            blockLight = numpy.concatenate((blockLight, zeros), axis=2)
+        numpy.maximum(skyLight[:chunkWidth, -1:, :chunkHeight],
+                      blockLight[:chunkWidth, -1:, :chunkHeight],
                       areaBlockLights[1:-1, 0:1, 1:-1])
 
-        nc = neighboringChunks[pymclevel.faces.FaceZIncreasing]
-        numpy.maximum(nc.SkyLight[:chunkWidth, :1, :chunkHeight],
-                      nc.BlockLight[:chunkWidth, :1, :chunkHeight],
+        skyLight, blockLight = neighboringChunks[pymclevel.faces.FaceZIncreasing].SkyLight, neighboringChunks[pymclevel.faces.FaceZIncreasing].BlockLight
+        if skyLight.shape[2] == chunkHeight / 2:
+            skyLight = numpy.concatenate((skyLight, zeros), axis=2)
+            blockLight = numpy.concatenate((blockLight, zeros), axis=2)
+        numpy.maximum(skyLight[:chunkWidth, :1, :chunkHeight],
+                      blockLight[:chunkWidth, :1, :chunkHeight],
+                      areaBlockLights[1:-1, -1:, 1:-1])
+
+        fxd = neighboringChunks[pymclevel.faces.FaceXDecreasing]
+        fxi = neighboringChunks[pymclevel.faces.FaceXIncreasing]
+        fzd = neighboringChunks[pymclevel.faces.FaceZDecreasing]
+        fzi = neighboringChunks[pymclevel.faces.FaceZIncreasing]
+        fxd_skyLight = fxd.SkyLight
+        fxi_skyLight = fxi.SkyLight
+        fzd_skyLight = fzd.SkyLight
+        fzi_skyLight = fzi.SkyLight
+        fxd_blockLight = fxd.BlockLight
+        fxi_blockLight = fxi.BlockLight
+        fzd_blockLight = fzd.BlockLight
+        fzi_blockLight = fzi.BlockLight
+        if fxd_skyLight.shape[2] == chunkHeight / 2:
+            fxd_skyLight = numpy.concatenate((fxd_skyLight, zeros), axis=2)
+            fxd_blockLight = numpy.concatenate((fxd_blockLight, zeros), axis=2)
+        if fxi_skyLight.shape[2] == chunkHeight / 2:
+            fxi_skyLight = numpy.concatenate((fxi_skyLight, zeros), axis=2)
+            fxi_blockLight = numpy.concatenate((fxi_blockLight, zeros), axis=2)
+        if fzd_skyLight.shape[2] == chunkHeight / 2:
+            fzd_skyLight = numpy.concatenate((fzd_skyLight, zeros), axis=2)
+            fzd_blockLight = numpy.concatenate((fzd_blockLight, zeros), axis=2)
+        if fzi_skyLight.shape[2] == chunkHeight / 2:
+            fzi_skyLight = numpy.concatenate((fzi_skyLight, zeros), axis=2)
+            fzi_blockLight = numpy.concatenate((fzi_blockLight, zeros), axis=2)
+        numpy.maximum(fxd_skyLight[-1:, :chunkLength, :chunkHeight],
+                      fxd_blockLight[-1:, :chunkLength, :chunkHeight],
+                      areaBlockLights[0:1, 1:-1, 1:-1])
+
+        numpy.maximum(fxi_skyLight[:1, :chunkLength, :chunkHeight],
+                      fxi_blockLight[:1, :chunkLength, :chunkHeight],
+                      areaBlockLights[-1:, 1:-1, 1:-1])
+
+        numpy.maximum(fzd_skyLight[:chunkWidth, -1:, :chunkHeight],
+                      fzd_blockLight[:chunkWidth, -1:, :chunkHeight],
+                      areaBlockLights[1:-1, 0:1, 1:-1])
+
+        numpy.maximum(fzi_skyLight[:chunkWidth, :1, :chunkHeight],
+                      fzi_blockLight[:chunkWidth, :1, :chunkHeight],
                       areaBlockLights[1:-1, -1:, 1:-1])
 
         minimumLight = 4
-        # areaBlockLights[areaBlockLights<minimumLight]=minimumLight
         numpy.clip(areaBlockLights, minimumLight, 16, areaBlockLights)
 
         return areaBlockLights
 
-    def calcHighDetailFaces(self, cr,
-                            blockRenderers):  # ForChunk(self, chunkPosition = (0,0), level = None, alpha = 1.0):
+    def calcHighDetailFaces(self, cr, blockRenderers):
         """ calculate the geometry for a chunk renderer from its blockMats, data,
         and lighting array. fills in the cr's blockRenderers with verts
         for each block facing and material"""
@@ -1019,6 +1040,8 @@ class ChunkCalculator(object):
         level = cr.renderer.level
 
         chunk = level.getChunk(cx, cz)
+#         if isinstance(chunk, pymclevel.level.FakeChunk):
+#             return
         neighboringChunks = self.getNeighboringChunks(chunk)
 
         areaBlocks = self.getAreaBlocks(chunk, neighboringChunks)
@@ -1027,20 +1050,12 @@ class ChunkCalculator(object):
         areaBlockLights = self.getAreaBlockLights(chunk, neighboringChunks)
         yield
 
-        slabs = areaBlocks == alphaMaterials.StoneSlab.ID  #If someone could combine these, that would be great.
-        if slabs.any():
-            areaBlockLights[slabs] = areaBlockLights[:, :, 1:][slabs[:, :, :-1]]
-        yield
-
-        woodSlabs = areaBlocks == alphaMaterials.OakWoodSlab.ID
-        if woodSlabs.any():
-            areaBlockLights[woodSlabs] = areaBlockLights[:, :, 1:][woodSlabs[:, :, :-1]]
-        yield
-
-        redSlabs = areaBlocks == alphaMaterials.RedSandstoneSlab.ID
-        if redSlabs.any():
-            areaBlockLights[redSlabs] = areaBlockLights[:, :, 1:][redSlabs[:, :, :-1]]
-        yield
+        allSlabs = set([b.ID for b in alphaMaterials.allBlocks if "Slab" in b.name])
+        for slab in allSlabs:
+            slabs = areaBlocks == slab
+            if slabs.any():
+                areaBlockLights[slabs] = areaBlockLights[:, :, 1:][slabs[:, :, :-1]]
+            yield
 
         showHiddenOres = cr.renderer.showHiddenOres
         if showHiddenOres:
@@ -1093,7 +1108,7 @@ class ChunkCalculator(object):
         sx = sz = slice(0, 16)
         asx = asz = slice(0, 18)
 
-        for y in range(0, chunk.world.Height, 16):
+        for y in xrange(0, chunk.world.Height, 16):
             sy = slice(y, y + 16)
             asy = slice(y, y + 18)
 
@@ -1112,7 +1127,9 @@ class ChunkCalculator(object):
     def computeCubeGeometry(self, y, blockRenderers, blocks, blockData, materials, blockMaterials, facingBlockIndices,
                             areaBlockLights, chunkRenderer):
         materialCounts = numpy.bincount(blockMaterials.ravel())
-
+        
+        append = blockRenderers.append
+        
         def texMap(blocks, blockData=0, direction=slice(None)):
             return materials.blockTextures[blocks, blockData, direction]  # xxx slow
 
@@ -1127,13 +1144,12 @@ class ChunkCalculator(object):
             for _ in blockRenderer.makeVertices(facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights,
                                                 texMap):
                 yield
-            blockRenderers.append(blockRenderer)
+            append(blockRenderer)
 
             yield
 
     def makeTemplate(self, direction, blockIndices):
-        return self.precomputedVertices[direction][blockIndices]
-
+        return self.precomputedVertices[direction][numpy.where(blockIndices)]
 
 class Layer:
     Blocks = "Blocks"
@@ -1148,7 +1164,6 @@ class Layer:
 
 
 class BlockRenderer(object):
-    # vertexArrays = None
     detailLevels = (0,)
     layer = Layer.Blocks
     directionOffsets = {
@@ -1166,11 +1181,11 @@ class BlockRenderer(object):
         self.makeTemplate = cc.makeTemplate
         self.chunkCalculator = cc
         self.vertexArrays = []
+        self.materials = cc.level.materials
         pass
 
-    @classmethod
-    def getBlocktypes(cls, mats):
-        return cls.blocktypes
+    def getBlocktypes(self, mats):
+        return self.blocktypes
 
     def setAlpha(self, alpha):
         "alpha is an unsigned byte value"
@@ -1185,6 +1200,7 @@ class BlockRenderer(object):
 
     def makeVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         arrays = []
+        append = arrays.append
         materialIndices = self.getMaterialIndices(blockMaterials)
         yield
 
@@ -1196,7 +1212,7 @@ class BlockRenderer(object):
                                                 blockLight, facingBlockLight, texMap)
             yield
             if len(vertexArray):
-                arrays.append(vertexArray)
+                append(vertexArray)
         self.vertexArrays = arrays
 
     def makeArrayList(self, chunkPosition, showRedraw):
@@ -1225,7 +1241,7 @@ class BlockRenderer(object):
                 self.drawFaceVertices(buf)
 
     def drawFaceVertices(self, buf):
-        if 0 == len(buf):
+        if not len(buf):
             return
         stride = elementByteLength
         
@@ -1241,7 +1257,7 @@ class EntityRendererGeneric(BlockRenderer):
     detailLevels = (0, 1, 2)
 
     def drawFaceVertices(self, buf):
-        if 0 == len(buf):
+        if not len(buf):
             return
         stride = elementByteLength
 
@@ -1270,7 +1286,7 @@ class EntityRendererGeneric(BlockRenderer):
         z = cz << 4
 
         vertexArray = numpy.zeros(shape=(len(positions), 6, 4, 6), dtype='float32')
-        if len(positions):
+        if positions:
             positions = numpy.array(positions)
             positions[:, (0, 2)] -= (x, z)
             if offset:
@@ -1288,12 +1304,13 @@ class TileEntityRenderer(EntityRendererGeneric):
 
     def makeChunkVertices(self, chunk):
         tilePositions = []
+        append = tilePositions.append
         for i, ent in enumerate(chunk.TileEntities):
             if i % 10 == 0:
                 yield
             if 'x' not in ent:
                 continue
-            tilePositions.append(pymclevel.TileEntity.pos(ent))
+            append(pymclevel.TileEntity.pos(ent))
         tiles = self._computeVertices(tilePositions, (0xff, 0xff, 0x33, 0x44), chunkPosition=chunk.chunkPosition)
         yield
         self.vertexArrays = [tiles]
@@ -1309,7 +1326,8 @@ class MonsterRenderer(BaseEntityRenderer):
 
     def makeChunkVertices(self, chunk):
         monsterPositions = []
-        notMonsters = MCEDIT_DEFS.get('notMonsters', self.notMonsters)
+        append = monsterPositions.append
+        notMonsters = self.chunkCalculator.level.defsIds.mcedit_defs.get('notMonsters', self.notMonsters)
         for i, ent in enumerate(chunk.Entities):
             if i % 10 == 0:
                 yield
@@ -1318,7 +1336,7 @@ class MonsterRenderer(BaseEntityRenderer):
                 continue
             pos = pymclevel.Entity.pos(ent)
             pos[1] += 0.5
-            monsterPositions.append(pos)
+            append(pos)
 
         monsters = self._computeVertices(monsterPositions,
                                          (0xff, 0x22, 0x22, 0x44),
@@ -1334,17 +1352,6 @@ class EntityRenderer(BaseEntityRenderer):
         yield
 
 
-#        entityPositions = []
-#        for i, ent in enumerate(chunk.Entities):
-#            if i % 10 == 0:
-#                yield
-#            entityPositions.append(pymclevel.Entity.pos(ent))
-#
-#        entities = self._computeVertices(entityPositions, (0x88, 0x00, 0x00, 0x66), offset=True, chunkPosition=chunk.chunkPosition)
-#        yield
-#        self.vertexArrays = [entities]
-
-
 class ItemRenderer(BaseEntityRenderer):
     layer = Layer.Items
 
@@ -1358,22 +1365,27 @@ class ItemRenderer(BaseEntityRenderer):
             "ItemFrame": (134, 96, 67, 0x5f),
             "ArmorStand": (0x22, 0xff, 0x22, 0x5f),
         }
+        pos_append = entityPositions.append
+        color_append = entityColors.append
+        defsIds = self.chunkCalculator.level.defsIds
+        mcedit_defs = defsIds.mcedit_defs
+        mcedit_ids = defsIds.mcedit_ids
         for i, ent in enumerate(chunk.Entities):
             if i % 10 == 0:
                 yield
             # Let get the color from the versionned data, and use the 'old' way as fallback
-            color = MCEDIT_DEFS.get(MCEDIT_IDS.get(ent["id"].value), {}).get("mapcolor")
+            color = mcedit_defs.get(mcedit_ids.get(ent["id"].value), {}).get("mapcolor")
             if color is None:
                 color = colorMap.get(ent["id"].value)
 
             if color is None:
                 continue
             pos = pymclevel.Entity.pos(ent)
-            noRenderDelta = MCEDIT_DEFS.get('noRenderDelta', ("Painting", "ItemFrame"))
+            noRenderDelta = mcedit_defs.get('noRenderDelta', ("Painting", "ItemFrame"))
             if ent["id"].value not in noRenderDelta:
                 pos[1] += 0.5
-            entityPositions.append(pos)
-            entityColors.append(color)
+            pos_append(pos)
+            color_append(color)
 
         entities = self._computeVertices(entityPositions,
                                          numpy.array(entityColors, dtype='uint8')[:, numpy.newaxis, numpy.newaxis],
@@ -1402,7 +1414,7 @@ class TerrainPopulatedRenderer(EntityRendererGeneric):
     vertexTemplate.view('uint8')[_RGBA] = color + (72,)
 
     def drawFaceVertices(self, buf):
-        if 0 == len(buf):
+        if not len(buf):
             return
         stride = elementByteLength
 
@@ -1482,7 +1494,7 @@ class ChunkBorderRenderer(EntityRendererGeneric):
         yield
 
     def drawFaceVertices(self, buf):
-        if 0 == len(buf):
+        if not len(buf):
             return
         stride = elementByteLength
   
@@ -1525,7 +1537,6 @@ class LowDetailBlockRenderer(BlockRenderer):
 
     def makeChunkVertices(self, ch):
         step = 1
-
         level = ch.world
         vertexArrays = []
         blocks = ch.Blocks
@@ -1565,7 +1576,6 @@ class LowDetailBlockRenderer(BlockRenderer):
             blockTypes = blocks[blockIndices]
 
             flatcolors = level.materials.flatColors[blockTypes, ch.Data[blockIndices] & 0xf][:, numpy.newaxis, :]
-            # flatcolors[:,:,:3] *= (0.6 + (h * (0.4 / float(chunkHeight-1)))) [topBlocks != 0][:, numpy.newaxis, numpy.newaxis]
             x, z, y = blockIndices.nonzero()
 
             yield
@@ -1633,6 +1643,7 @@ class GenericBlockRenderer(BlockRenderer):
 
     def makeGenericVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         vertexArrays = []
+        append = vertexArrays.append
         materialIndices = self.getMaterialIndices(blockMaterials)
         yield
 
@@ -1642,7 +1653,6 @@ class GenericBlockRenderer(BlockRenderer):
 
             theseBlocks = blocks[blockIndices]
             bdata = blockData[blockIndices]
-
             vertexArray = self.makeTemplate(direction, blockIndices)
             if not len(vertexArray):
                 continue
@@ -1656,7 +1666,7 @@ class GenericBlockRenderer(BlockRenderer):
                     vertexArray.view('uint8')[_RGB][grass] = vertexArray.view('uint8')[_RGB][grass].astype(float) * self.grassColor
             yield
 
-            vertexArrays.append(vertexArray)
+            append(vertexArray)
 
         self.vertexArrays = vertexArrays
 
@@ -1666,7 +1676,10 @@ class GenericBlockRenderer(BlockRenderer):
 
 
 class LeafBlockRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["LEAVES"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["LEAVES"]]
 
     @property
     def renderstate(self):
@@ -1677,6 +1690,7 @@ class LeafBlockRenderer(BlockRenderer):
 
     def makeLeafVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         arrays = []
+        append = arrays.append
         materialIndices = self.getMaterialIndices(blockMaterials)
         yield
 
@@ -1708,7 +1722,6 @@ class LeafBlockRenderer(BlockRenderer):
                     jungle = (data == alphaMaterials.JungleLeaves.blockData)
                     acacia = (data == alphaMaterials.AcaciaLeaves.blockData)
                     darkoak = (data == alphaMaterials.DarkOakLeaves.blockData)
-                    #leaves |= type3
 
                     texes = texMap(blocks[blockIndices], data, 0)
 
@@ -1732,7 +1745,7 @@ class LeafBlockRenderer(BlockRenderer):
                 vertexArray.view('uint8')[_RGB][darkoak] = vertexArray.view('uint8')[_RGB][darkoak].astype(float) * self.darkoakLeafColor
 
             yield
-            arrays.append(vertexArray)
+            append(vertexArray)
 
         self.vertexArrays = arrays
 
@@ -1759,6 +1772,7 @@ class PlantBlockRenderer(BlockRenderer):
 
     def makePlantVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         arrays = []
+        append = arrays.append
         blockIndices = self.getMaterialIndices(blockMaterials)
         yield
 
@@ -1772,8 +1786,8 @@ class PlantBlockRenderer(BlockRenderer):
 
         colorize = None
         if self.materials.name != "Classic":  #so hacky, someone more competent fix this
-            colorize = (theseBlocks == alphaMaterials.TallGrass.ID) & (bdata != 0)
-            colorize2 = (theseBlocks == alphaMaterials.TallFlowers.ID) & (bdata != 0) & (
+            colorize = (theseBlocks == self.materials.TallGrass.ID) & (bdata != 0)
+            colorize2 = (theseBlocks == self.materials.TallFlowers.ID) & (bdata != 0) & (
             bdata != 1) & (bdata != 4) & (bdata != 5)
 
         for direction in (
@@ -1799,7 +1813,7 @@ class PlantBlockRenderer(BlockRenderer):
             if colorize is not None:
                 vertexArray.view('uint8')[_RGB][colorize] = vertexArray.view('uint8')[_RGB][colorize].astype(float) * LeafBlockRenderer.leafColor
                 vertexArray.view('uint8')[_RGB][colorize2] = vertexArray.view('uint8')[_RGB][colorize2].astype(float) * LeafBlockRenderer.leafColor
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
 
         self.vertexArrays = arrays
@@ -1808,7 +1822,10 @@ class PlantBlockRenderer(BlockRenderer):
 
 
 class TorchBlockRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["TORCH"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["TORCH"]]
     
     renderstate = ChunkCalculator.renderstateAlphaTest
     torchOffsetsStraight = [
@@ -1944,7 +1961,8 @@ class TorchBlockRenderer(BlockRenderer):
         texes = texMap(blocks[blockIndices], blockData[blockIndices])
         yield
         arrays = []
-        for direction in range(6):
+        append = arrays.append
+        for direction in xrange(6):
             vertexArray = self.makeTemplate(direction, blockIndices)
             if not len(vertexArray):
                 return
@@ -1956,14 +1974,18 @@ class TorchBlockRenderer(BlockRenderer):
             if direction == pymclevel.faces.FaceYDecreasing:
                 vertexArray[_ST] = self.downCoords
             vertexArray[_ST] += texes[:, numpy.newaxis, direction]
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
     makeVertices = makeTorchVertices
-    
+
+
 class LeverBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:lever"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:lever"].ID]
     
     leverBaseTemplate = makeVertexTemplatesFromJsonModel((5, 0, 4), (11, 3, 12), {
         "down": (10, 0, 16, 8),
@@ -2025,31 +2047,37 @@ class LeverBlockRenderer(BlockRenderer):
     
 
 class RailBlockRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["SIMPLE_RAIL"]]
     renderstate = ChunkCalculator.renderstateAlphaTest
 
-    railTextures = numpy.array([
-                                   [(0, 128), (0, 144), (16, 144), (16, 128)],  # east-west
-                                   [(0, 128), (16, 128), (16, 144), (0, 144)],  # north-south
-                                   [(0, 128), (16, 128), (16, 144), (0, 144)],  # south-ascending
-                                   [(0, 128), (16, 128), (16, 144), (0, 144)],  # north-ascending
-                                   [(0, 128), (0, 144), (16, 144), (16, 128)],  # east-ascending
-                                   [(0, 128), (0, 144), (16, 144), (16, 128)],  # west-ascending
+    def __init__(self, *args, **kwargs):
+        BlockRenderer.__init__(self, *args, **kwargs)
+        self.railTextures = numpy.array([
+                                       [(0, 128), (0, 144), (16, 144), (16, 128)],  # east-west
+                                       [(0, 128), (16, 128), (16, 144), (0, 144)],  # north-south
+                                       [(0, 128), (16, 128), (16, 144), (0, 144)],  # south-ascending
+                                       [(0, 128), (16, 128), (16, 144), (0, 144)],  # north-ascending
+                                       [(0, 128), (0, 144), (16, 144), (16, 128)],  # east-ascending
+                                       [(0, 128), (0, 144), (16, 144), (16, 128)],  # west-ascending
 
-                                   [(0, 112), (0, 128), (16, 128), (16, 112)],  # northeast corner
-                                   [(0, 128), (16, 128), (16, 112), (0, 112)],  # southeast corner
-                                   [(16, 128), (16, 112), (0, 112), (0, 128)],  # southwest corner
-                                   [(16, 112), (0, 112), (0, 128), (16, 128)],  # northwest corner
+                                       [(0, 112), (0, 128), (16, 128), (16, 112)],  # northeast corner
+                                       [(0, 128), (16, 128), (16, 112), (0, 112)],  # southeast corner
+                                       [(16, 128), (16, 112), (0, 112), (0, 128)],  # southwest corner
+                                       [(16, 112), (0, 112), (0, 128), (16, 128)],  # northwest corner
 
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
-                                   [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
+                                       [(0, 192), (0, 208), (16, 208), (16, 192)],  # unknown
 
-                               ], dtype='float32')
-    railTextures -= alphaMaterials.blockTextures[alphaMaterials.Rail.ID, 0, 0]
+                                   ], dtype='float32')
+
+        self.railTextures -= self.materials.blockTextures[self.materials.Rail.ID, 0, 0]
+
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["SIMPLE_RAIL"]]
 
     railOffsets = numpy.array([
                                   [0, 0, 0, 0],
@@ -2084,7 +2112,7 @@ class RailBlockRenderer(BlockRenderer):
         tex = texMap(railBlocks, bdata, pymclevel.faces.FaceYIncreasing)[:, numpy.newaxis, :]
 
         # disable 'powered' or 'pressed' bit for powered and detector rails
-        bdata[railBlocks != alphaMaterials.Rail.ID] = bdata[railBlocks != alphaMaterials.Rail.ID].astype(int) & ~0x8
+        bdata[railBlocks != self.materials.Rail.ID] = bdata[railBlocks != self.materials.Rail.ID].astype(int) & ~0x8
 
         vertexArray = self.makeTemplate(direction, blockIndices)
         if not len(vertexArray):
@@ -2106,7 +2134,10 @@ class RailBlockRenderer(BlockRenderer):
 
 
 class LadderBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:ladder"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:ladder"].ID]
 
     ladderOffsets = numpy.array([
                                     [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)],
@@ -2151,7 +2182,10 @@ class LadderBlockRenderer(BlockRenderer):
 
 
 class WallSignBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:wall_sign"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:wall_sign"].ID]
     
     wallSignTemplate = makeVertexTemplatesFromJsonModel((0, 4.5, 0), (16, 13.5, 2), {
         "down": (0, 11, 18, 13),
@@ -2176,7 +2210,10 @@ class WallSignBlockRenderer(BlockRenderer):
     makeVertices = makeVerticesFromModel(wallSignTemplates, 7)
     
 class StandingSignRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:standing_sign"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:standing_sign"].ID]
     
     signTemplate = makeVertexTemplatesFromJsonModel((0, 7, 7), (16, 16, 9), {
         "down": (0, 14, 16, 16),
@@ -2210,12 +2247,16 @@ class StandingSignRenderer(BlockRenderer):
 
 
 class SnowBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:snow_layer"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:snow_layer"].ID]
 
     def makeSnowVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         #snowIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2241,7 +2282,7 @@ class SnowBlockRenderer(BlockRenderer):
                 vertexArray[_XYZ][..., 2:4, 1] -= 0.875
                 vertexArray[_ST][..., 2:4, 1] += 14
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2249,13 +2290,16 @@ class SnowBlockRenderer(BlockRenderer):
 
 
 class CarpetBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:carpet"].ID,  #Separate before implementing layers
-                  alphaMaterials["minecraft:waterlily"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:carpet"].ID, mats["minecraft:waterlily"].ID] #Separate before implementing layers
 
     def makeCarpetVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         #snowIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2281,7 +2325,7 @@ class CarpetBlockRenderer(BlockRenderer):
                 vertexArray[_XYZ][..., 2:4, 1] -= 0.937
                 vertexArray[_ST][..., 2:4, 1] += 15
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2289,11 +2333,15 @@ class CarpetBlockRenderer(BlockRenderer):
 
 
 class CactusBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:cactus"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:cactus"].ID]
 
     def makeCactusVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2317,7 +2365,7 @@ class CactusBlockRenderer(BlockRenderer):
             if direction == pymclevel.faces.FaceZDecreasing:
                 vertexArray[_XYZ][..., 2] += 0.063
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2325,11 +2373,15 @@ class CactusBlockRenderer(BlockRenderer):
 
 
 class PaneBlockRenderer(BlockRenderer):  #Basic no thickness panes, add more faces to widen.
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["SOLID_PANE"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["SOLID_PANE"]]
 
     def makePaneVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2352,7 +2404,7 @@ class PaneBlockRenderer(BlockRenderer):  #Basic no thickness panes, add more fac
             if direction == pymclevel.faces.FaceZDecreasing:
                 vertexArray[_XYZ][..., 2] += 0.5
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2360,11 +2412,15 @@ class PaneBlockRenderer(BlockRenderer):  #Basic no thickness panes, add more fac
 
 
 class PlateBlockRenderer(BlockRenderer):  #suggestions to make this the proper shape is appreciated.
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["PRESSURE_PLATE"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["PRESSURE_PLATE"]]
 
     def makePlateVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2383,7 +2439,7 @@ class PlateBlockRenderer(BlockRenderer):  #suggestions to make this the proper s
                 vertexArray[_XYZ][..., 2:4, 1] -= 0.937
                 vertexArray[_ST][..., 2:4, 1] += 15
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2392,12 +2448,15 @@ class PlateBlockRenderer(BlockRenderer):  #suggestions to make this the proper s
 
 class EnchantingBlockRenderer(
     BlockRenderer):  #Note: Enderportal frame side sprite has been lowered 1 pixel to use this renderer, will need separate renderer for eye.
-    blocktypes = [alphaMaterials["minecraft:enchanting_table"].ID,
-                  alphaMaterials["minecraft:end_portal_frame"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:enchanting_table"].ID, mats["minecraft:end_portal_frame"].ID]
 
     def makeEnchantingVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
             if direction != pymclevel.faces.FaceYIncreasing:
@@ -2416,7 +2475,7 @@ class EnchantingBlockRenderer(
             if direction == pymclevel.faces.FaceYIncreasing:
                 vertexArray[_XYZ][..., 1] -= 0.25
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2424,12 +2483,15 @@ class EnchantingBlockRenderer(
 
 
 class DaylightBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:daylight_detector"].ID,
-                  alphaMaterials.DaylightSensorOn.ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:daylight_detector"].ID, mats.DaylightSensorOn.ID]
 
     def makeDaylightVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
             if direction != pymclevel.faces.FaceYIncreasing:
@@ -2451,7 +2513,7 @@ class DaylightBlockRenderer(BlockRenderer):
                 vertexArray[_XYZ][..., 2:4, 1] -= 0.625
                 vertexArray[_ST][..., 2:4, 1] += 10
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2459,11 +2521,15 @@ class DaylightBlockRenderer(BlockRenderer):
 
 
 class BedBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:bed"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:bed"].ID]
 
     def makeBedVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
             if direction != pymclevel.faces.FaceYIncreasing:
@@ -2482,7 +2548,7 @@ class BedBlockRenderer(BlockRenderer):
             if direction == pymclevel.faces.FaceYIncreasing:
                 vertexArray[_XYZ][..., 1] -= 0.438
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2490,11 +2556,15 @@ class BedBlockRenderer(BlockRenderer):
 
 
 class CakeBlockRenderer(BlockRenderer):  #Only shows whole cakes
-    blocktypes = [alphaMaterials["minecraft:cake"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:cake"].ID]
 
     def makeCakeVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2520,7 +2590,7 @@ class CakeBlockRenderer(BlockRenderer):  #Only shows whole cakes
             if direction == pymclevel.faces.FaceZDecreasing:
                 vertexArray[_XYZ][..., 2] += 0.063
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2528,11 +2598,15 @@ class CakeBlockRenderer(BlockRenderer):  #Only shows whole cakes
 
 
 class RepeaterBlockRenderer(BlockRenderer):  #Sticks would be nice
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["THINSLICE"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [block.ID for block in mats.blocksByType["THINSLICE"]]
 
     def makeRepeaterVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         materialIndices = self.getMaterialIndices(blockMaterials)
         arrays = []
+        append = arrays.append
         yield
         for direction, exposedFaceIndices in enumerate(facingBlockIndices):
 
@@ -2552,7 +2626,7 @@ class RepeaterBlockRenderer(BlockRenderer):  #Sticks would be nice
                 vertexArray[_XYZ][..., 2:4, 1] -= 0.875
                 vertexArray[_ST][..., 2:4, 1] += 14
 
-            arrays.append(vertexArray)
+            append(vertexArray)
             yield
         self.vertexArrays = arrays
 
@@ -2560,7 +2634,10 @@ class RepeaterBlockRenderer(BlockRenderer):  #Sticks would be nice
 
 
 class RedstoneBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:redstone_wire"].ID]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [mats["minecraft:redstone_wire"].ID]
 
     def redstoneVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         blockIndices = self.getMaterialIndices(blockMaterials)
@@ -2569,7 +2646,7 @@ class RedstoneBlockRenderer(BlockRenderer):
         if not len(vertexArray):
             return
 
-        vertexArray[_ST] += alphaMaterials.blockTextures[55, 0, 0]
+        vertexArray[_ST] += self.materials.blockTextures[55, 0, 0]
         vertexArray[_XYZ][..., 1] -= 0.9
 
         bdata = blockData[blockIndices]
@@ -2590,13 +2667,11 @@ class RedstoneBlockRenderer(BlockRenderer):
 # button, floor plate, door -> 1-cube features
 
 class DoorRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:wooden_door"].ID,
-                  alphaMaterials["minecraft:iron_door"].ID,
-                  alphaMaterials["minecraft:spruce_door"].ID,
-                  alphaMaterials["minecraft:birch_door"].ID,
-                  alphaMaterials["minecraft:jungle_door"].ID,
-                  alphaMaterials["minecraft:acacia_door"].ID,
-                  alphaMaterials["minecraft:dark_oak_door"].ID]
+
+    @classmethod
+    def getBlocktypes(cls, mats):
+        cls.blocktypes = [block.ID for block in mats.blocksByType["DOOR"]]
+        return cls.blocktypes
 
     doorTemplate = makeVertexTemplatesFromJsonModel(
         (0, 0, 0), (3, 16, 16),
@@ -2666,7 +2741,10 @@ class DoorRenderer(BlockRenderer):
     makeVertices = makeVerticesFromModel(doorTemplates, 31)
 
 class ButtonRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["BUTTON"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [a.ID for a in mats.blocksByType["BUTTON"]]
 
     buttonTemplate = makeVertexTemplatesFromJsonModel((5, 0, 6), (11, 2, 10), {
         "down": (5, 6, 11, 10),
@@ -2706,7 +2784,10 @@ class ButtonRenderer(BlockRenderer):
     makeVertices = makeVerticesFromModel(buttonTemplates, 15)
 
 class TrapDoorRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["TRAPDOOR"]]
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [a.ID for a in mats.blocksByType["TRAPDOOR"]]
 
     openTemplate = makeVertexTemplatesFromJsonModel((0, 0, 13), (16, 16, 16), {
         "down": (0, 13, 16, 16),
@@ -2758,15 +2839,25 @@ class TrapDoorRenderer(BlockRenderer):
 
 
 class FenceBlockRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["FENCE"]]
-    
+#     def __init__(self, *args, **kwargs):
+#         BlockRenderer.__init__(self, *args, **kwargs)
+#         self.blocktypes = [block.ID for block in self.materials.blocksByType["FENCE"]]
+
     fenceTemplates = makeVertexTemplates(3 / 8., 0, 3 / 8., 5 / 8., 1, 5 / 8.)
 
     makeVertices = makeVerticesFromModel(fenceTemplates)
 
+    @classmethod
+    def getBlocktypes(cls, mats):
+#         if mats.name == "Pocket":
+#             cls.blocktypes = cls.blocktypes_pocket
+#         else:
+#             cls.blocktypes = cls.blocktypes_alpha
+#         return cls.blocktypes
+        return [block.ID for block in mats.blocksByType["FENCE"]]
+
 
 class FenceGateBlockRenderer(BlockRenderer):
-    blocktypes = [block.ID for block in alphaMaterials.blocksByType["FENCE_GATE"]]
     
     closedFenceTemplates = numpy.array([
         makeVertexTemplates(0, 0, 3 / 8., 1, .8, 5 / 8.),
@@ -2781,6 +2872,10 @@ class FenceGateBlockRenderer(BlockRenderer):
          makeVertexTemplates(7 / 8., 0, 0, 1, .8, 5 / 8.)],
         [makeVertexTemplates(3 / 8., 0, 0, 1, .8, 1 / 8.),
          makeVertexTemplates(3 / 8., 0, 7 / 8., 1, .8, 1)]])
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        return [a.ID for a in mats.AllStairs]
 
     def fenceGateVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         fenceMask = self.getMaterialIndices(blockMaterials)
@@ -2801,7 +2896,7 @@ class FenceGateBlockRenderer(BlockRenderer):
 
         # closed gate
         vertexArray = numpy.zeros((len(closedGateIndices[0]), 6, 4, 6), dtype='float32')
-        for indicies in range(3):
+        for indicies in xrange(3):
             dimension = (0, 2, 1)[indicies]
 
             vertexArray[..., indicies] = closedGateIndices[dimension][:, numpy.newaxis,
@@ -2818,11 +2913,12 @@ class FenceGateBlockRenderer(BlockRenderer):
         vertexArray.shape = (vertexArray.shape[0] * 6, 4, 6)
         yield
         self.vertexArrays = [vertexArray]
-
+        
+        append = self.vertexArrays.append
         # open gate
-        for i in range(2):
+        for i in xrange(2):
             vertexArray = numpy.zeros((len(openGateIndices[0]), 6, 4, 6), dtype='float32')
-            for indicies in range(3):
+            for indicies in xrange(3):
                 dimension = (0, 2, 1)[indicies]
 
                 vertexArray[..., indicies] = openGateIndices[dimension][:, numpy.newaxis,
@@ -2839,12 +2935,13 @@ class FenceGateBlockRenderer(BlockRenderer):
                 ..., numpy.newaxis, numpy.newaxis, numpy.newaxis]
             vertexArray.shape = (vertexArray.shape[0] * 6, 4, 6)
             yield
-            self.vertexArrays.append(vertexArray)
+            append(vertexArray)
 
     makeVertices = fenceGateVertices
 
 
 class StairBlockRenderer(BlockRenderer):
+    
     @classmethod
     def getBlocktypes(cls, mats):
         return [a.ID for a in mats.AllStairs]
@@ -2869,6 +2966,7 @@ class StairBlockRenderer(BlockRenderer):
 
     def stairVertices(self, facingBlockIndices, blocks, blockMaterials, blockData, areaBlockLights, texMap):
         arrays = []
+        append = arrays.append
         materialIndices = self.getMaterialIndices(blockMaterials)
         yield
         stairBlocks = blocks[materialIndices]
@@ -2880,7 +2978,7 @@ class StairBlockRenderer(BlockRenderer):
 
         for _ in ("slab", "step"):
             vertexArray = numpy.zeros((len(x), 6, 4, 6), dtype='float32')
-            for i in range(3):
+            for i in xrange(3):
                 vertexArray[_XYZ][..., i] = (x, y, z)[i][:, numpy.newaxis, numpy.newaxis]
 
             if _ == "step":
@@ -2897,21 +2995,23 @@ class StairBlockRenderer(BlockRenderer):
 
             vertexArray.shape = (len(x) * 6, 4, 6)
             yield
-            arrays.append(vertexArray)
+            append(vertexArray)
         self.vertexArrays = arrays
 
     makeVertices = stairVertices
 
 
 class VineBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:vine"].ID]
-
     SouthBit = 1  #FaceZIncreasing
     WestBit = 2  #FaceXDecreasing
     NorthBit = 4  #FaceZDecreasing
     EastBit = 8  #FaceXIncreasing
 
     renderstate = ChunkCalculator.renderstateVines
+
+    def __init__(self, *args, **kwargs):
+        BlockRenderer.__init__(self, *args, **kwargs)
+        self.blocktypes = [self.materials["minecraft:vine"].ID]
 
     def vineFaceVertices(self, direction, blockIndices, exposedFaceIndices, blocks, blockData, blockLight,
                          facingBlockLight, texMap):
@@ -2954,10 +3054,17 @@ class VineBlockRenderer(BlockRenderer):
 
 
 class SlabBlockRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:wooden_slab"].ID,
-                  alphaMaterials["minecraft:stone_slab"].ID,
-                  alphaMaterials["minecraft:stone_slab2"].ID,
-                  alphaMaterials["minecraft:purpur_slab"].ID]
+    def __init__(self, *args, **kwargs):
+        BlockRenderer.__init__(self, *args, **kwargs)
+        materials = self.materials
+#         self.blocktypes = [materials["minecraft:wooden_slab"].ID,
+#                   materials["minecraft:stone_slab"].ID,
+#                   materials["minecraft:stone_slab2"].ID,
+#                   materials["minecraft:purpur_slab"].ID]
+#         print "self.blocktypes", self.blocktypes
+#         print "self.materials.AllSlabs", list(set(a.ID for a in self.materials.AllSlabs if "double" not in a.name.lower()))
+#         print list(set(a for a in self.materials.AllSlabs if "double" not in a.name.lower()))
+        self.blocktypes = list(set(a.ID for a in materials.AllSlabs if "double" not in a.name.lower()))
 
     def slabFaceVertices(self, direction, blockIndices, facingBlockLight, blocks, blockData, blockLight,
                          areaBlockLights, texMap):
@@ -2990,7 +3097,9 @@ class SlabBlockRenderer(BlockRenderer):
 
 # 1.9 renderer's
 class EndRodRenderer(BlockRenderer):
-    blocktypes = [alphaMaterials["minecraft:end_rod"].ID]
+    def __init__(self, *args, **kwargs):
+        BlockRenderer.__init__(self, *args, **kwargs)
+        self.blocktypes = [self.materials["minecraft:end_rod"].ID]
 
     rodTemplate = makeVertexTemplatesFromJsonModel((7, 1, 7), (9, 16, 9), {
         "down": (4, 2, 2, 0),
@@ -3033,9 +3142,18 @@ class EndRodRenderer(BlockRenderer):
     makeVertices = makeVerticesFromModel([rodTemplates, handleTemplates], 7)
 
 class WaterBlockRenderer(BlockRenderer):
-    waterID = alphaMaterials["minecraft:water"].ID
-    blocktypes = [alphaMaterials["minecraft:flowing_water"].ID, waterID]
     renderstate = ChunkCalculator.renderstateWater
+
+    def __init__(self, *args, **kwargs):
+        BlockRenderer.__init__(self, *args, **kwargs)
+        materials = self.materials
+        self.waterID = materials["minecraft:water"].ID
+        self.blocktypes = [materials["minecraft:flowing_water"].ID, self.waterID]
+
+    @classmethod
+    def getBlocktypes(cls, mats):
+        cls.waterID = mats["minecraft:water"].ID
+        return [mats["minecraft:flowing_water"].ID, cls.waterID]
 
     def waterFaceVertices(self, direction, blockIndices, exposedFaceIndices, blocks, blockData, blockLight,
                           facingBlockLight, texMap):
@@ -3049,9 +3167,12 @@ class WaterBlockRenderer(BlockRenderer):
 
 
 class IceBlockRenderer(BlockRenderer):
-    iceID = alphaMaterials["minecraft:ice"].ID
-    blocktypes = [iceID]
     renderstate = ChunkCalculator.renderstateIce
+    
+    @classmethod
+    def getBlocktypes(cls, mats):
+        cls.iceID = mats["minecraft:ice"].ID
+        return [cls.iceID]
 
     def iceFaceVertices(self, direction, blockIndices, exposedFaceIndices, blocks, blockData, blockLight,
                         facingBlockLight, texMap):
@@ -3117,10 +3238,10 @@ class MCRenderer(object):
 
         for ore in config.settings.hiddableOres.get():
             config.settings["showOre{}".format(ore)].addObserver(self, callback=lambda x, id=ore: self.showOre(id, x))
-
-        self.level = level
             
-        if self.level.__class__.__name__ in ("FakeLevel","MCSchematic"):
+        self.level = level 
+            
+        if self.level.__class__.__name__ in ("FakeLevel", "MCSchematic"):
             self.toggleLayer(False, 'ChunkBorder')
             
 
@@ -3213,7 +3334,6 @@ class MCRenderer(object):
         if vd != self._viewDistance:
             self._viewDistance = vd
             self.viewDistanceChanged()
-            # self.invalidateChunkMarkers()
 
     viewDistance = property(getViewDistance, setViewDistance, None, "View Distance")
 
@@ -3262,7 +3382,7 @@ class MCRenderer(object):
             self.chunkCalculator = self.calculatorClass(self.level)
 
             self.oldPosition = None
-
+            
         self.loadNearbyChunks()
 
     position = (0, 0, 0)
@@ -3289,11 +3409,11 @@ class MCRenderer(object):
         step = dir = 1
 
         while True:
-            for i in range(step):
+            for i in xrange(step):
                 cx += dir
                 yield (cx, cz)
 
-            for i in range(step):
+            for i in xrange(step):
                 cz += dir
                 yield (cx, cz)
 
@@ -3338,7 +3458,6 @@ class MCRenderer(object):
         if not len(self.chunkRenderers):
             return
         (ox, oz) = origin
-        # chunks = numpy.fromiter(self.chunkRenderers.iterkeys(), dtype='int32', count=len(self.chunkRenderers))
         chunks = numpy.fromiter(self.chunkRenderers.iterkeys(), dtype='i,i', count=len(self.chunkRenderers))
         chunks.dtype = 'int32'
         chunks.shape = len(self.chunkRenderers), 2
@@ -3411,11 +3530,8 @@ class MCRenderer(object):
     def invalidateChunk(self, cx, cz, layers=None):
         " marks the chunk for regenerating vertex data and display lists "
         if (cx, cz) in self.chunkRenderers:
-            # self.chunkRenderers[(cx,cz)].invalidate()
-            # self.bufferUsage -= self.chunkRenderers[(cx, cz)].bufferSize
 
             self.chunkRenderers[(cx, cz)].invalidate(layers)
-            # self.bufferUsage += self.chunkRenderers[(cx, cz)].bufferSize
 
             self.invalidChunkQueue.append((cx, cz))  # xxx encapsulate
 
@@ -3548,17 +3664,6 @@ class MCRenderer(object):
             GL.glColor(1.0, 1.0, 1.0, 1.0)
 
             self.floorTexture.bind()
-            # chunkColor = numpy.zeros(shape=(chunks.shape[0], 4, 4), dtype='float32')
-            #            chunkColor[:]= (1, 1, 1, 0.15)
-            #
-            #            cc = numpy.array(chunks[:,0] + chunks[:,1], dtype='int32')
-            #            cc &= 1
-            #            coloredChunks = cc > 0
-            #            chunkColor[coloredChunks] = (1, 1, 1, 0.28)
-            #            chunkColor *= 255
-            #            chunkColor = numpy.array(chunkColor, dtype='uint8')
-            #
-            # GL.glColorPointer(4, GL.GL_UNSIGNED_BYTE, 0, chunkColor)
             for size, chunks in sizedChunks.iteritems():
                 if not len(chunks):
                     continue
@@ -3583,8 +3688,6 @@ class MCRenderer(object):
     def drawLoadableChunkMarkers(self):
         if not self.isPreviewer or isinstance(self.level, pymclevel.MCInfdevOldLevel):
             self.loadableChunkMarkers.call(self._drawLoadableChunkMarkers)
-
-            # self.drawCompressedChunkMarkers()
 
     needsImmediateRedraw = False
     viewingFrustum = None
@@ -3619,7 +3722,6 @@ class MCRenderer(object):
                     if len(chunkLists[rs]):
                         lists[rs] = numpy.array(chunkLists[rs], dtype='uint32').ravel()
 
-                # lists = lists[lists.nonzero()]
                 self.masterLists = lists
                 self.shouldRecreateMasterList = shouldRecreateAgain
                 self.needsImmediateRedraw = shouldRecreateAgain
@@ -3686,7 +3788,6 @@ class MCRenderer(object):
 
             GL.glDisable(GL.GL_TEXTURE_2D)
             GL.glDisableClientState(GL.GL_TEXTURE_COORD_ARRAY)
-            # if self.drawLighting:
             self.drawLoadableChunkMarkers()
 
         if self.level.materials.name in ("Pocket", "Alpha"):
@@ -3790,7 +3891,6 @@ class MCRenderer(object):
         if self.level.containsChunk(*c):
             cr = self.getChunkRenderer(c)
             if self.viewingFrustum:
-                # if not self.viewingFrustum.visible(numpy.array([[c[0] * 16 + 8, 64, c[1] * 16 + 8, 1.0]]), 64).any():
                 if not self.viewingFrustum.visible1([c[0] * 16 + 8, self.level.Height / 2, c[1] * 16 + 8, 1.0],
                                                     self.level.Height / 2):
                     raise StopIteration
@@ -3804,7 +3904,7 @@ class MCRenderer(object):
 
                 self.invalidateMasterList()
 
-            except Exception, e:
+            except Exception as e:
                 traceback.print_exc()
                 fn = c
 
@@ -3890,7 +3990,7 @@ def rendermain():
 
     framestart = datetime.now()
     frames = 200
-    for i in range(frames):
+    for i in xrange(frames):
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         renderer.draw()
         pygame.display.flip()
@@ -3907,7 +4007,7 @@ def rendermain():
 
 
 import traceback
-import cProfile
 
 if __name__ == "__main__":
+    import cProfile
     cProfile.run("rendermain()", "mcedit.profile")

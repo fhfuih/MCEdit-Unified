@@ -11,7 +11,7 @@ from pymclevel import TAG_Short
 from pymclevel import TAG_Byte
 from pymclevel import TAG_Byte_Array
 from pymclevel import TAG_String
-from numpy import zeros
+from numpy import zeros, fromstring
 
 inputs = (
     ("Biome",  ("Ocean",
@@ -157,9 +157,17 @@ def perform(level, box, options):
 
     for x in xrange(minx, box.maxx, 16):
         for z in xrange(minz, box.maxz, 16):
+            # Pocket chunks root tag don't have any 'Level' member
+            # But a 'Biome' member instead.
             chunk = level.getChunk(x / 16, z / 16)
             chunk.dirty = True
-            array = chunk.root_tag["Level"]["Biomes"].value
+            chunk_root_tag = None
+            if chunk.root_tag and 'Level' in chunk.root_tag.keys() and 'Biomes' in chunk.root_tag["Level"].keys():
+                chunk_root_tag = chunk.root_tag
+                array = chunk_root_tag["Level"]["Biomes"].value
+            else:
+                shape = chunk.Biomes.shape
+                array = fromstring(chunk.Biomes.tostring(), 'uint8')
 
             chunkx = int(x / 16) * 16
             chunkz = int(z / 16) * 16
@@ -168,5 +176,8 @@ def perform(level, box, options):
                 for bz in xrange(max(box.minz, chunkz), min(box.maxz, chunkz + 16)):
                     idx = 16 * (bz - chunkz) + (bx - chunkx)
                     array[idx] = biome
-
-            chunk.root_tag["Level"]["Biomes"].value = array
+            if chunk_root_tag:
+                chunk_root_tag["Level"]["Biomes"].value = array
+            else:
+                array.shape = shape
+                chunk.Biomes = array

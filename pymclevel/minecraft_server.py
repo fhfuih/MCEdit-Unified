@@ -76,14 +76,14 @@ def sort_nicely(l):
 
 
 class ServerJarStorage(object):
-    cacheDir = os.path.join(getCacheDir(), u"ServerJarStorage")
+    _cacheDir = os.path.join(getCacheDir(), u"ServerJarStorage")
 
     def __init__(self, cacheDir=None):
-        if not os.path.exists(self.cacheDir):
-            os.makedirs(self.cacheDir)
-        readme = os.path.join(self.cacheDir, "README.TXT")
+        if not os.path.exists(self._cacheDir):
+            os.makedirs(self._cacheDir)
+        readme = os.path.join(self._cacheDir, "README.TXT")
         if not os.path.exists(readme):
-            with file(readme, "w") as f:
+            with open(readme, "w") as f:
                 f.write("""
 About this folder:
 
@@ -106,13 +106,13 @@ this way.
         self.reloadVersions()
 
     def reloadVersions(self):
-        cacheDirList = os.listdir(self.cacheDir)
+        cacheDirList = os.listdir(self._cacheDir)
         self.versions = list(
             reversed(sorted([v for v in cacheDirList if os.path.exists(self.jarfileForVersion(v))], key=alphanum_key)))
 
-        if MCServerChunkGenerator.javaExe:
+        if MCServerChunkGenerator.java_exe:
             for f in cacheDirList:
-                p = os.path.join(self.cacheDir, f)
+                p = os.path.join(self._cacheDir, f)
                 if f.startswith("minecraft_server") and f.endswith(".jar") and os.path.isfile(p):
                     print "Unclassified minecraft_server.jar found in cache dir. Discovering version number..."
                     self.cacheNewVersion(p)
@@ -120,7 +120,7 @@ this way.
 
         print "Minecraft_Server.jar storage initialized."
         print u"Each server is stored in a subdirectory of {0} named with the server's version number".format(
-            self.cacheDir)
+            self._cacheDir)
 
         print "Cached servers: ", self.versions
 
@@ -129,7 +129,7 @@ this way.
         print "Downloading the latest Minecraft Server..."
         try:
             (filename, headers) = urllib.urlretrieve(getVersions(getSnapshot))
-        except Exception, e:
+        except Exception as e:
             print "Error downloading server: {0!r}".format(e)
             return
 
@@ -141,7 +141,7 @@ this way.
 
         version = MCServerChunkGenerator._serverVersionFromJarFile(filename)
         print "Found version ", version
-        versionDir = os.path.join(self.cacheDir, version)
+        versionDir = os.path.join(self._cacheDir, version)
 
         i = 1
         newVersionDir = versionDir
@@ -160,11 +160,11 @@ this way.
             self.versions.append(version)
 
     def jarfileForVersion(self, v):
-        return os.path.join(self.cacheDir, v, "minecraft_server.jar").encode(sys.getfilesystemencoding())
+        return os.path.join(self._cacheDir, v, "minecraft_server.jar").encode(sys.getfilesystemencoding())
 
     def checksumForVersion(self, v):
         jf = self.jarfileForVersion(v)
-        with file(jf, "rb") as f:
+        with open(jf, "rb") as f:
             import hashlib
 
             return hashlib.md5(f.read()).hexdigest()
@@ -200,22 +200,36 @@ def readProperties(filename):
     if not os.path.exists(filename):
         return {}
 
-    with file(filename) as f:
+    with open(filename) as f:
         properties = dict((line.split("=", 2) for line in (l.strip() for l in f) if not line.startswith("#")))
 
     return properties
 
 
 def saveProperties(filename, properties):
-    with file(filename, "w") as f:
+    with open(filename, "w") as f:
         for k, v in properties.iteritems():
             f.write("{0}={1}\n".format(k, v))
 
 
 def findJava():
+    # Here we implement the Java executable on the CLI.
+    # This is because several version of Java may be installed on the system, and the one
+    # needed fir the server may not be in the path...
+    log.info("Looking for Java")
+    if "--java" in sys.argv:
+        idx = sys.argv.index("--java")
+        java_exe_path = sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+        log.info("CLI switch '--java' found: %s" % java_exe_path)
+    else:
+        if sys.platform == "win32":
+            java_exe_path = "java.exe"
+        else:
+            java_exe_path = "java"
     if sys.platform == "win32":
-        javaExe = which("java.exe")
-        if javaExe is None:
+        java_exe = which(java_exe_path)
+        if java_exe is None:
             KEY_NAME = "HKLM\SOFTWARE\JavaSoft\Java Runtime Environment"
             try:
                 p = subprocess.Popen(["REG", "QUERY", KEY_NAME, "/v", "CurrentVersion"], stdout=subprocess.PIPE,
@@ -236,16 +250,16 @@ def findJava():
                             if l.startswith("JavaHome"):
                                 w = l.split(None, 2)
                                 javaHome = w[-1]
-                                javaExe = os.path.join(javaHome, "bin", "java.exe")
-                                print "RegQuery: java.exe found at ", javaExe
+                                java_exe = os.path.join(javaHome, "bin", "java.exe")
+                                print "RegQuery: java.exe found at ", java_exe
                                 break
 
-            except Exception, e:
+            except Exception as e:
                 print "Error while locating java.exe using the Registry: ", repr(e)
     else:
-        javaExe = which("java")
+        java_exe = which(java_exe_path)
 
-    return javaExe
+    return java_exe
 
 
 class MCServerChunkGenerator(object):
@@ -272,16 +286,16 @@ class MCServerChunkGenerator(object):
     """
     defaultJarStorage = None
 
-    javaExe = findJava()
+    java_exe = findJava()
     jarStorage = None
-    tempWorldCache = {}
+    _tempWorldCache = {}
     processes = []
 
     def __init__(self, version=None, jarfile=None, jarStorage=None):
 
         self.jarStorage = jarStorage or self.getDefaultJarStorage()
 
-        if self.javaExe is None:
+        if self.java_exe is None:
             raise JavaNotFound(
                 "Could not find java. Please check that java is installed correctly. (Could not find java in your PATH environment variable.)")
         if jarfile is None:
@@ -289,7 +303,7 @@ class MCServerChunkGenerator(object):
         if jarfile is None:
             raise VersionNotFound(
                 "Could not find minecraft_server.jar for version {0}. Please make sure that a minecraft_server.jar is placed under {1} in a subfolder named after the server's version number.".format(
-                    version or "(latest)", self.jarStorage.cacheDir))
+                    version or "(latest)", self.jarStorage._cacheDir))
         self.serverJarFile = jarfile
         self.serverVersion = version or self._serverVersion()
         atexit.register(MCServerChunkGenerator.terminateProcesses)
@@ -302,7 +316,7 @@ class MCServerChunkGenerator(object):
 
     @classmethod
     def clearWorldCache(cls):
-        cls.tempWorldCache = {}
+        cls._tempWorldCache = {}
 
         for tempDir in os.listdir(cls.worldCacheDir):
             t = os.path.join(cls.worldCacheDir, tempDir)
@@ -313,7 +327,7 @@ class MCServerChunkGenerator(object):
         readme = os.path.join(self.worldCacheDir, "README.TXT")
 
         if not os.path.exists(readme):
-            with file(readme, "w") as f:
+            with open(readme, "w") as f:
                 f.write("""
     About this folder:
 
@@ -331,7 +345,7 @@ class MCServerChunkGenerator(object):
         propsFile = os.path.join(tempDir, "server.properties")
         properties = readProperties(propsFile)
 
-        tempWorld = self.tempWorldCache.get((self.serverVersion, level.RandomSeed))
+        tempWorld = self._tempWorldCache.get((self.serverVersion, level.RandomSeed))
 
         if tempWorld is None:
             if not os.path.exists(tempDir):
@@ -347,7 +361,7 @@ class MCServerChunkGenerator(object):
 
             tempWorldRO = infiniteworld.MCInfdevOldLevel(tempWorldDir, readonly=True)
 
-            self.tempWorldCache[self.serverVersion, level.RandomSeed] = tempWorldRO
+            self._tempWorldCache[self.serverVersion, level.RandomSeed] = tempWorldRO
 
         if level.dimNo == 0:
             properties["allow-nether"] = "false"
@@ -386,7 +400,6 @@ class MCServerChunkGenerator(object):
         proc = self.runServer(tempDir)
         while proc.poll() is None:
             line = proc.stdout.readline().strip()
-            log.info(line)
             yield line
 
             # Forge and FML change stderr output, causing MCServerChunkGenerator to wait endlessly.
@@ -403,7 +416,7 @@ class MCServerChunkGenerator(object):
 
                     simSeconds = max(8, int(duration) + 1)
 
-                    for i in range(simSeconds):
+                    for i in xrange(simSeconds):
                         # process tile ticks
                         yield "%2d/%2d: Simulating the world for a little bit..." % (i, simSeconds)
                         time.sleep(1)
@@ -431,7 +444,7 @@ class MCServerChunkGenerator(object):
             return
         try:
             tempChunkBytes = tempWorld._getChunkBytes(cx, cz)
-        except ChunkNotPresent, e:
+        except ChunkNotPresent as e:
             raise ChunkNotPresent("While generating a world in {0} using server {1} ({2!r})".format(tempWorld,
                                                                                                      self.serverJarFile,
                                                                                                      e), sys.exc_info()[
@@ -543,44 +556,65 @@ class MCServerChunkGenerator(object):
         maxRadius = self.maxRadius
         chunks = set(chunks)
 
+        uncreated_chunks = []
+
+        i = 0
+
+        boxedChunks = [cPos for cPos in chunks if chunks]
+
         while len(chunks):
             length = len(chunks)
             centercx, centercz = chunks.pop()
             chunks.add((centercx, centercz))
 
-            print "Generating {0} chunks out of {1} starting from {2}".format(len(chunks), startLength, (centercx, centercz))
-            yield startLength - len(chunks), startLength
+            print "Generated {0} chunks out of {1} starting from {2}".format(startLength - len(chunks), startLength, (centercx, centercz))
+            yield startLength - len(chunks), startLength, "Generating..."
 
             for p in self.generateAtPositionIter(tempWorld, tempDir, centercx, centercz, simulate):
-                # print p
                 yield startLength - len(chunks), startLength, p
 
-            i = 0
+            yield i, startLength, "Adding chunks to world..."
             for cx, cz in itertools.product(
                     xrange(centercx - maxRadius, centercx + maxRadius),
                     xrange(centercz - maxRadius, centercz + maxRadius)):
-                if ((cx, cz) in chunks
-                      and all(tempWorld.containsChunk(ncx, ncz) for ncx, ncz in
-                              itertools.product(xrange(cx - 1, cx + 2), xrange(cz - 1, cz + 2)))
-                ):
-                    self.copyChunkAtPosition(tempWorld, level, cx, cz)
-                    i += 1
-                yield startLength - len(chunks), startLength
-                chunks.discard((cx, cz))
+                if level.containsChunk(cx, cz):
+                    chunks.discard((cx, cz))
+                    if (cx, cz) in uncreated_chunks:
+                        uncreated_chunks.remove((cx, cz))
+                elif ((cx, cz) in chunks
+                      and tempWorld.containsChunk(cx, cz)):
+                    try:
+                        self.copyChunkAtPosition(tempWorld, level, cx, cz)
+                        i += 1
+                        chunks.discard((cx, cz))
+                        if (cx, cz) in uncreated_chunks:
+                            uncreated_chunks.remove((cx, cz))
+                    except:
+                        uncreated_chunks.append((cx, cz))
+                else:
+                    if (cx, cz) in boxedChunks and (cx, cz) not in uncreated_chunks:
+                        log.info("adding (%s, %s) to uncreated_chunks"%(cx, cz))
+                        uncreated_chunks.append((cx, cz))
+            yield i, startLength, "Generating..."
 
+        msg = ""
+        if len(chunks) == startLength:
+            msg = "No chunks were generated. Aborting."
+        elif uncreated_chunks:
+            msg = "Some chunks were not generated. Reselect them and retry."
+        if msg:
+            log.warning(msg)
 
-            if length == len(chunks):
-                # This block is never used?
-                print "No chunks were generated. Aborting."
-                break
+#         print "len(uncreated_chunks)", len(uncreated_chunks)
 
         level.saveInPlace()
 
-    if __builtins__.get('mcenf_generateChunksInLevelIter', False):
-        log.info("Using new MCServerChunkGenerator.generateChunksInLevelIter")
-        generateChunksInLevelIter = generateChunksInLevelIter_new
-    else:
-        generateChunksInLevelIter = generateChunksInLevelIter_old
+#     if __builtins__.get('mcenf_generateChunksInLevelIter', False):
+#         log.info("Using new MCServerChunkGenerator.generateChunksInLevelIter")
+#         generateChunksInLevelIter = generateChunksInLevelIter_new
+#     else:
+#         generateChunksInLevelIter = generateChunksInLevelIter_old
+    generateChunksInLevelIter = generateChunksInLevelIter_new
 
     def runServer(self, startingDir):
         if isinstance(startingDir, unicode):
@@ -598,8 +632,8 @@ class MCServerChunkGenerator(object):
         else:
             memflags = ["-Xmx1024M", "-Xms1024M", ]
 
-        proc = subprocess.Popen([cls.javaExe, "-Djava.awt.headless=true"] + memflags + ["-jar", jarfile],
-                                executable=cls.javaExe,
+        proc = subprocess.Popen([cls.java_exe, "-Djava.awt.headless=true"] + memflags + ["-jar", jarfile],
+                                executable=cls.java_exe,
                                 cwd=startingDir,
                                 stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE,
@@ -612,7 +646,7 @@ class MCServerChunkGenerator(object):
     @classmethod
     def terminateProcesses(cls):
         for process in cls.processes:
-            if process.poll():
+            if process.poll() is None:
                 try:
                     process.terminate()
                 except:

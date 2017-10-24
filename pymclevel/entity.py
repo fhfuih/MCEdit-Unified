@@ -8,7 +8,6 @@ from math import isnan
 import random
 import nbt
 from copy import deepcopy
-from pymclevel import MCEDIT_DEFS, MCEDIT_IDS
 
 __all__ = ["Entity", "TileEntity", "TileTick"]
 
@@ -77,6 +76,11 @@ class TileEntity(object):
         "Hopper": (
             ("Items", nbt.TAG_List),
         ),
+        "MobHead": {
+            ("SkullType", nbt.TAG_Byte),
+            ("Rot", nbt.TAG_Byte),
+            ("Owner", nbt.TAG_Compound),
+        }
     }
 
     otherNames = {
@@ -95,6 +99,7 @@ class TileEntity(object):
         "Dropper": "Dropper",
         "Dispenser": "Dispenser",
         "Hopper": "Hopper",
+        "MobHead": "Skull",
     }
 
     stringNames = {
@@ -119,6 +124,7 @@ class TileEntity(object):
         "dropper": "Dropper",
         "dispenser": "Dispenser",
         "hopper": "Hopper",
+        "skull": "MobHead",
     }
 
     knownIDs = baseStructures.keys()
@@ -146,10 +152,13 @@ class TileEntity(object):
     }
 
     @classmethod
-    def Create(cls, tileEntityID, pos=(0, 0, 0), **kw):
+    def Create(cls, tileEntityID, pos=(0, 0, 0), defsIds=None, **kw):
         tileEntityTag = nbt.TAG_Compound()
-        # Refresh the MCEDIT_DEFS and MCEDIT_IDS objects
-        from pymclevel import MCEDIT_DEFS, MCEDIT_IDS
+        # If defsIds is None, lets use the current MCEDIT_DEFS and MCEDIT_IDS objects.
+        if not defsIds:
+            from pymclevel import MCEDIT_DEFS
+        else:
+            MCEDIT_DEFS = defsIds.mcedit_defs
         _id = MCEDIT_DEFS.get(tileEntityID, tileEntityID)
         tileEntityTag["id"] = nbt.TAG_String(_id)
         base = cls.baseStructures.get(tileEntityID, None)
@@ -187,10 +196,15 @@ class TileEntity(object):
             tag[a] = nbt.TAG_Int(p)
 
     @classmethod
-    def copyWithOffset(cls, tileEntity, copyOffset, staticCommands, moveSpawnerPos, first, cancelCommandBlockOffset=False):
+    def copyWithOffset(cls, tileEntity, copyOffset, staticCommands, moveSpawnerPos, first, cancelCommandBlockOffset=False, defsIds=None):
         # You'll need to use this function twice
         # The first time with first equals to True
         # The second time with first equals to False
+        # If defsIds is None, lets use the current MCEDIT_DEFS and MCEDIT_IDS objects.
+        if not defsIds:
+            from pymclevel import MCEDIT_IDS
+        else:
+            MCEDIT_IDS = defsIds.mcedit_ids
         eTag = deepcopy(tileEntity)
         eTag['x'] = nbt.TAG_Int(tileEntity['x'].value + copyOffset[0])
         eTag['y'] = nbt.TAG_Int(tileEntity['y'].value + copyOffset[1])
@@ -690,6 +704,12 @@ class PocketEntity(Entity):
                   "Iron Golem": 20,
                   "Snow Golem": 21,
                   "Ocelot": 22,
+                  "Horse": 23,
+                  "Donkey": 24,
+                  "Mule": 25,
+                  "SkeletonHorse": 26,
+                  "ZombieHorse": 27,
+                  "PolarBear": 28,
                   "Zombie": 32,
                   "Creeper": 33,
                   "Skeleton": 34,
@@ -703,24 +723,45 @@ class PocketEntity(Entity):
                   "Magma Cube": 42,
                   "Blaze": 43,
                   "Zombie Villager": 44,
+                  "Witch": 45,
+                  "StraySkeleton": 46,
+                  "Hust": 47,
+                  "WitherSkeleton": 48,
+                  "Guardian": 49,
+                  "ElderGuardian": 50,
+                  "WitherBoss": 52,
+                  "EnderDragon": 53,
+                  "Shulker": 54,
+                  "Endermite": 55,
+                  "Player": 63,
                   "Item": 64,
                   "PrimedTnt": 65,
                   "FallingSand": 66,
+                  "ThrownExpBottle": 68,
+                  "XPOrb": 69,
+                  "EyeOfEnderSignal": 70,
+                  "EnderCrystal": 71,
+                  "ShulkerBullet": 76,
                   "Fishing Rod Bobber": 77,
+                  "DragonFireball": 79,
                   "Arrow": 80,
                   "Snowball": 81,
                   "Egg": 82,
                   "Painting": 83,
                   "MinecartRideable": 84,
                   "Fireball": 85,
+                  "ThrownPotion": 86,
+                  "ThrownEnderpearl": 87,
+                  "LeashKnot": 88,
+                  "WitherSkull": 89,
                   "Boat": 90,
-                  "Player": 63,
-                  "Entity": 69,
+                  "Lightning": 93,
+                  "Blaze Fireball": 94,
+                  "AreaEffectCloud": 95,
                   "Minecart with Hopper": 96,
                   "Minecart with TNT": 97,
                   "Minecart with Chest": 98,
-                  "Blaze Fireball": 94,
-                  "Lightning": 93}
+                  "LingeringPotion": 101}
 
     @classmethod
     def getNumId(cls, v):
